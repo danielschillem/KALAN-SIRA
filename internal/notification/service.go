@@ -1,0 +1,7 @@
+package notification
+import("context";"fmt";"github.com/jackc/pgx/v5/pgxpool")
+type Service struct{db *pgxpool.Pool}
+func NewService(db *pgxpool.Pool)*Service{return &Service{db:db}}
+type QueueInput struct{SchoolPublicID string `json:"school_public_id"`;StudentPublicID string `json:"student_public_id"`;GuardianPublicID string `json:"guardian_public_id"`;Type string `json:"type"`;Channel string `json:"channel"`;TemplateKey string `json:"template_key"`;Message string `json:"message"`;PaymentURL string `json:"payment_url"`}
+type Queued struct{ID string `json:"id"`;Status string `json:"status"`}
+func(s *Service)Queue(ctx context.Context,in QueueInput)(Queued,error){if in.Channel!="SMS"{return Queued{},fmt.Errorf("only SMS outbox is enabled")};var o Queued;e:=s.db.QueryRow(ctx,`INSERT INTO notifications(school_id,student_id,guardian_id,type,channel,template_key,payload,status,scheduled_at) SELECT s.id,st.id,g.id,$4,$5,$6,jsonb_build_object('message',$7,'payment_url',$8,'phone',g.phone),'PENDING',now() FROM schools s JOIN students st ON st.school_id=s.id AND st.public_id=$2 JOIN guardians g ON g.public_id=$3 JOIN student_guardians sg ON sg.student_id=st.id AND sg.guardian_id=g.id AND sg.can_receive_notifications=true WHERE s.public_id=$1 RETURNING notifications.id::text,notifications.status`,in.SchoolPublicID,in.StudentPublicID,in.GuardianPublicID,in.Type,in.Channel,in.TemplateKey,in.Message,in.PaymentURL).Scan(&o.ID,&o.Status);return o,e}

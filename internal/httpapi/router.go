@@ -1,11 +1,62 @@
 package httpapi
-import("encoding/json";"net/http";"strings";"github.com/danielschillem/KALAN-SIRA/internal/academic";"github.com/danielschillem/KALAN-SIRA/internal/auth";"github.com/danielschillem/KALAN-SIRA/internal/billing";"github.com/danielschillem/KALAN-SIRA/internal/enrollment";"github.com/danielschillem/KALAN-SIRA/internal/notification";"github.com/danielschillem/KALAN-SIRA/internal/parent";"github.com/danielschillem/KALAN-SIRA/internal/payment";"github.com/danielschillem/KALAN-SIRA/internal/portal";"github.com/danielschillem/KALAN-SIRA/internal/school";"github.com/danielschillem/KALAN-SIRA/internal/student")
-type Router struct{schools *school.Service;academics *academic.Service;students *student.Service;enrollments *enrollment.Service;billing *billing.Service;payments *payment.Service;portal *portal.Service;notifications *notification.Service;parents *parent.Service;auth *auth.Service}
-func NewRouter(s *school.Service,a *academic.Service,st *student.Service,e *enrollment.Service,b *billing.Service,p *payment.Service,po *portal.Service,n *notification.Service,pa *parent.Service,au *auth.Service)http.Handler{r:=&Router{s,a,st,e,b,p,po,n,pa,au};pub:=http.NewServeMux();pub.HandleFunc("GET /health",r.health);pub.HandleFunc("POST /api/v1/auth/otp/request",r.requestOTP);pub.HandleFunc("POST /api/v1/auth/otp/verify",r.verifyOTP);pub.HandleFunc("GET /api/v1/pay/{token}",r.paymentPage);pub.HandleFunc("POST /api/v1/payments/provider-callback",r.providerCallback);secure:=http.NewServeMux();secure.Handle("GET /api/v1/parent/dashboard",r.requireRoles(http.HandlerFunc(r.parentDashboardSecure),"PARENT"));secure.Handle("GET /api/v1/parent/children/{studentID}",r.requireRoles(http.HandlerFunc(r.parentChildSecure),"PARENT"));secure.Handle("POST /api/v1/school-years",r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantSchoolYear),"SCHOOL_ADMIN")));secure.Handle("POST /api/v1/levels",r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantLevel),"SCHOOL_ADMIN")));secure.Handle("POST /api/v1/classes",r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantClass),"SCHOOL_ADMIN","REGISTRAR")));secure.Handle("POST /api/v1/students",r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantStudent),"SCHOOL_ADMIN","REGISTRAR")));secure.Handle("POST /api/v1/enrollments",r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantEnrollment),"SCHOOL_ADMIN","REGISTRAR")));secure.Handle("POST /api/v1/fee-schedules",r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantFeeSchedule),"SCHOOL_ADMIN")));secure.Handle("POST /api/v1/fee-items",r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantFeeItem),"SCHOOL_ADMIN")));secure.Handle("POST /api/v1/installment-plans",r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantPlan),"SCHOOL_ADMIN")));secure.Handle("POST /api/v1/installments",r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantInstallment),"SCHOOL_ADMIN")));secure.Handle("POST /api/v1/enrollments/activate",r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantActivateEnrollment),"SCHOOL_ADMIN","REGISTRAR")));secure.Handle("POST /api/v1/payments/cash",r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantCash),"SCHOOL_ADMIN","CASHIER")));secure.Handle("POST /api/v1/payment-links",r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantPaymentLink),"SCHOOL_ADMIN","CASHIER")));secure.Handle("POST /api/v1/notifications",r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantNotification),"SCHOOL_ADMIN","REGISTRAR","CASHIER")));return http.HandlerFunc(func(w http.ResponseWriter,q *http.Request){if q.URL.Path=="/health"||strings.HasPrefix(q.URL.Path,"/api/v1/auth/")||strings.HasPrefix(q.URL.Path,"/api/v1/pay/")||q.URL.Path=="/api/v1/payments/provider-callback"{pub.ServeHTTP(w,q);return};r.requireAuth(secure).ServeHTTP(w,q)})}
-func(r *Router)health(w http.ResponseWriter,_ *http.Request){writeJSON(w,200,map[string]string{"status":"ok","service":"kalan-sira-api","version":"0.11.0"})}
-func decode(w http.ResponseWriter,q *http.Request,v any)bool{d:=json.NewDecoder(http.MaxBytesReader(w,q.Body,1<<20));d.DisallowUnknownFields();if d.Decode(v)!=nil{writeError(w,400,"invalid_request","invalid JSON body");return false};return true}
-func(r *Router)paymentPage(w http.ResponseWriter,q *http.Request){o,e:=r.portal.GetPage(q.Context(),strings.TrimSpace(q.PathValue("token")));if e!=nil{writeError(w,404,"payment_link_not_found","payment link not found");return};writeJSON(w,200,o)}
-func(r *Router)providerCallback(w http.ResponseWriter,q *http.Request){var i payment.Callback;if !decode(w,q,&i){return};o,e:=r.payments.ConfirmCallback(q.Context(),i);if e!=nil{writeError(w,400,"provider_callback_failed",e.Error());return};writeJSON(w,200,o)}
-func created(w http.ResponseWriter,o any,e error,c string){if e!=nil{writeError(w,400,c,e.Error());return};writeJSON(w,201,o)}
-func writeJSON(w http.ResponseWriter,s int,v any){w.Header().Set("Content-Type","application/json; charset=utf-8");w.WriteHeader(s);_ = json.NewEncoder(w).Encode(v)}
-func writeError(w http.ResponseWriter,s int,c,m string){writeJSON(w,s,map[string]any{"error":map[string]string{"code":c,"message":m}})}
+
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+
+	"github.com/danielschillem/KALAN-SIRA/internal/academic"
+	"github.com/danielschillem/KALAN-SIRA/internal/admission"
+	"github.com/danielschillem/KALAN-SIRA/internal/auth"
+	"github.com/danielschillem/KALAN-SIRA/internal/billing"
+	"github.com/danielschillem/KALAN-SIRA/internal/dashboard"
+	"github.com/danielschillem/KALAN-SIRA/internal/enrollment"
+	"github.com/danielschillem/KALAN-SIRA/internal/notification"
+	"github.com/danielschillem/KALAN-SIRA/internal/parent"
+	"github.com/danielschillem/KALAN-SIRA/internal/payment"
+	"github.com/danielschillem/KALAN-SIRA/internal/portal"
+	"github.com/danielschillem/KALAN-SIRA/internal/school"
+	"github.com/danielschillem/KALAN-SIRA/internal/student"
+)
+
+type Router struct { schools *school.Service; academics *academic.Service; students *student.Service; enrollments *enrollment.Service; billing *billing.Service; payments *payment.Service; portal *portal.Service; notifications *notification.Service; parents *parent.Service; auth *auth.Service; dashboard *dashboard.Service; admissions *admission.Service }
+
+func NewRouter(s *school.Service, a *academic.Service, st *student.Service, e *enrollment.Service, b *billing.Service, p *payment.Service, po *portal.Service, n *notification.Service, pa *parent.Service, au *auth.Service, d *dashboard.Service, ad *admission.Service) http.Handler {
+	r := &Router{s, a, st, e, b, p, po, n, pa, au, d, ad}
+	pub := http.NewServeMux()
+	pub.HandleFunc("GET /health", r.health)
+	pub.HandleFunc("POST /api/v1/auth/otp/request", r.requestOTP)
+	pub.HandleFunc("POST /api/v1/auth/otp/verify", r.verifyOTP)
+	pub.HandleFunc("GET /api/v1/pay/{token}", r.paymentPage)
+	pub.HandleFunc("POST /api/v1/payments/provider-callback", r.providerCallback)
+	secure := http.NewServeMux()
+	secure.Handle("GET /api/v1/parent/dashboard", r.requireRoles(http.HandlerFunc(r.parentDashboardSecure), "PARENT"))
+	secure.Handle("GET /api/v1/parent/children/{studentID}", r.requireRoles(http.HandlerFunc(r.parentChildSecure), "PARENT"))
+	secure.Handle("GET /api/v1/school/dashboard", r.requireSchool(r.requireRoles(http.HandlerFunc(r.schoolDashboard), "SCHOOL_ADMIN", "CASHIER", "REGISTRAR")))
+	secure.Handle("GET /api/v1/admissions/catalog", r.requireSchool(r.requireRoles(http.HandlerFunc(r.admissionCatalog), "SCHOOL_ADMIN", "REGISTRAR")))
+	secure.Handle("GET /api/v1/admissions/fees/{classID}", r.requireSchool(r.requireRoles(http.HandlerFunc(r.admissionPreview), "SCHOOL_ADMIN", "REGISTRAR")))
+	secure.Handle("POST /api/v1/admissions", r.requireSchool(r.requireRoles(http.HandlerFunc(r.createAdmission), "SCHOOL_ADMIN", "REGISTRAR")))
+	secure.Handle("POST /api/v1/school-years", r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantSchoolYear), "SCHOOL_ADMIN")))
+	secure.Handle("POST /api/v1/levels", r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantLevel), "SCHOOL_ADMIN")))
+	secure.Handle("POST /api/v1/classes", r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantClass), "SCHOOL_ADMIN", "REGISTRAR")))
+	secure.Handle("POST /api/v1/students", r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantStudent), "SCHOOL_ADMIN", "REGISTRAR")))
+	secure.Handle("POST /api/v1/enrollments", r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantEnrollment), "SCHOOL_ADMIN", "REGISTRAR")))
+	secure.Handle("POST /api/v1/fee-schedules", r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantFeeSchedule), "SCHOOL_ADMIN")))
+	secure.Handle("POST /api/v1/fee-items", r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantFeeItem), "SCHOOL_ADMIN")))
+	secure.Handle("POST /api/v1/installment-plans", r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantPlan), "SCHOOL_ADMIN")))
+	secure.Handle("POST /api/v1/installments", r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantInstallment), "SCHOOL_ADMIN")))
+	secure.Handle("POST /api/v1/enrollments/activate", r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantActivateEnrollment), "SCHOOL_ADMIN", "REGISTRAR")))
+	secure.Handle("POST /api/v1/payments/cash", r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantCash), "SCHOOL_ADMIN", "CASHIER")))
+	secure.Handle("POST /api/v1/payment-links", r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantPaymentLink), "SCHOOL_ADMIN", "CASHIER")))
+	secure.Handle("POST /api/v1/notifications", r.requireSchool(r.requireRoles(http.HandlerFunc(r.tenantNotification), "SCHOOL_ADMIN", "REGISTRAR", "CASHIER")))
+	return http.HandlerFunc(func(w http.ResponseWriter, q *http.Request) { if q.URL.Path == "/health" || strings.HasPrefix(q.URL.Path, "/api/v1/auth/") || strings.HasPrefix(q.URL.Path, "/api/v1/pay/") || q.URL.Path == "/api/v1/payments/provider-callback" { pub.ServeHTTP(w, q); return }; r.requireAuth(secure).ServeHTTP(w, q) })
+}
+
+func (r *Router) schoolDashboard(w http.ResponseWriter, q *http.Request) { sid, ok := schoolPrincipal(q); if !ok { writeError(w, 403, "forbidden", "school context required"); return }; o, e := r.dashboard.Get(q.Context(), sid); if e != nil { writeError(w, 500, "dashboard_failed", e.Error()); return }; writeJSON(w, 200, o) }
+func (r *Router) health(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]string{"status":"ok","service":"kalan-sira-api","version":"0.13.0"}) }
+func decode(w http.ResponseWriter, q *http.Request, v any) bool { d := json.NewDecoder(http.MaxBytesReader(w, q.Body, 1<<20)); d.DisallowUnknownFields(); if d.Decode(v) != nil { writeError(w, 400, "invalid_request", "invalid JSON body"); return false }; return true }
+func (r *Router) paymentPage(w http.ResponseWriter, q *http.Request) { o, e := r.portal.GetPage(q.Context(), strings.TrimSpace(q.PathValue("token"))); if e != nil { writeError(w, 404, "payment_link_not_found", "payment link not found"); return }; writeJSON(w, 200, o) }
+func (r *Router) providerCallback(w http.ResponseWriter, q *http.Request) { var i payment.Callback; if !decode(w, q, &i) { return }; o, e := r.payments.ConfirmCallback(q.Context(), i); if e != nil { writeError(w, 400, "provider_callback_failed", e.Error()); return }; writeJSON(w, 200, o) }
+func created(w http.ResponseWriter, o any, e error, c string) { if e != nil { writeError(w, 400, c, e.Error()); return }; writeJSON(w, 201, o) }
+func writeJSON(w http.ResponseWriter, s int, v any) { w.Header().Set("Content-Type", "application/json; charset=utf-8"); w.WriteHeader(s); _ = json.NewEncoder(w).Encode(v) }
+func writeError(w http.ResponseWriter, s int, c, m string) { writeJSON(w, s, map[string]any{"error":map[string]string{"code":c,"message":m}}) }

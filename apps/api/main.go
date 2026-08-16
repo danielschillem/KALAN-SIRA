@@ -1,37 +1,51 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"log"
 	"net/http"
-	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/danielschillem/KALAN-SIRA/internal/config"
+	"github.com/danielschillem/KALAN-SIRA/internal/database"
+	"github.com/danielschillem/KALAN-SIRA/internal/httpapi"
+	"github.com/danielschillem/KALAN-SIRA/internal/school"
 )
 
-type healthResponse struct {
-	Status  string `json:"status"`
-	Service string `json:"service"`
-	Version string `json:"version"`
-}
-
 func main() {
-	mux := http.NewServeMux()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(healthResponse{
-			Status:  "ok",
-			Service: "kalan-sira-api",
-			Version: "0.1.0",
-		})
-	})
+	cfg, err := config.Load()
+	if err != nil { log.Fatal(err) }
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	db, err := database.OpenPostgres(ctx, cfg.DatabaseURL)
+	if err != nil { log.Fatal(err) }
+	defer db.Close()
+
+	redisClient, err := database.OpenRedis(ctx, cfg.RedisURL)
+	if err != nil { log.Fatal(err) }
+	defer redisClient.Close()
+
+	handler := httpapi.NewRouter(school.NewService(db))
+	server := &http.Server{
+		Addr:              ":" + cfg.Port,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
-	log.Printf("KALAN-SIRA API listening on :%s", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
-		log.Fatal(err)
-	}
+	go func() {
+		log.Printf("KALAN-SIRA API listening on %s", server.Addr)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed { log.Fatal(err) }
+	}()
+
+	<-ctx.Done()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil { log.Printf("shutdown: %v", err) }
 }

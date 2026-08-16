@@ -1,3 +1,46 @@
 package main
-import("context";"log";"net/http";"os/signal";"syscall";"time";"github.com/danielschillem/KALAN-SIRA/internal/academic";"github.com/danielschillem/KALAN-SIRA/internal/auth";"github.com/danielschillem/KALAN-SIRA/internal/billing";"github.com/danielschillem/KALAN-SIRA/internal/config";"github.com/danielschillem/KALAN-SIRA/internal/dashboard";"github.com/danielschillem/KALAN-SIRA/internal/database";"github.com/danielschillem/KALAN-SIRA/internal/enrollment";"github.com/danielschillem/KALAN-SIRA/internal/httpapi";"github.com/danielschillem/KALAN-SIRA/internal/notification";"github.com/danielschillem/KALAN-SIRA/internal/parent";"github.com/danielschillem/KALAN-SIRA/internal/payment";"github.com/danielschillem/KALAN-SIRA/internal/portal";"github.com/danielschillem/KALAN-SIRA/internal/school";"github.com/danielschillem/KALAN-SIRA/internal/student")
-func main(){ctx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM);defer stop();cfg,err:=config.Load();if err!=nil{log.Fatal(err)};db,err:=database.OpenPostgres(ctx,cfg.DatabaseURL);if err!=nil{log.Fatal(err)};defer db.Close();redisClient,err:=database.OpenRedis(ctx,cfg.RedisURL);if err!=nil{log.Fatal(err)};defer redisClient.Close();handler:=httpapi.NewRouter(school.NewService(db),academic.NewService(db),student.NewService(db),enrollment.NewService(db),billing.NewService(db),payment.NewService(db),portal.NewService(db),notification.NewService(db),parent.NewService(db),auth.NewService(db),dashboard.NewService(db));server:=&http.Server{Addr:":"+cfg.Port,Handler:handler,ReadHeaderTimeout:5*time.Second,ReadTimeout:15*time.Second,WriteTimeout:15*time.Second,IdleTimeout:60*time.Second};go func(){log.Printf("KALAN-SIRA API listening on %s",server.Addr);if err:=server.ListenAndServe();err!=nil&&err!=http.ErrServerClosed{log.Fatal(err)}}();<-ctx.Done();shutdownCtx,cancel:=context.WithTimeout(context.Background(),10*time.Second);defer cancel();if err:=server.Shutdown(shutdownCtx);err!=nil{log.Printf("shutdown: %v",err)}}
+
+import (
+	"context"
+	"log"
+	"net/http"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/danielschillem/KALAN-SIRA/internal/academic"
+	"github.com/danielschillem/KALAN-SIRA/internal/admission"
+	"github.com/danielschillem/KALAN-SIRA/internal/auth"
+	"github.com/danielschillem/KALAN-SIRA/internal/billing"
+	"github.com/danielschillem/KALAN-SIRA/internal/config"
+	"github.com/danielschillem/KALAN-SIRA/internal/dashboard"
+	"github.com/danielschillem/KALAN-SIRA/internal/database"
+	"github.com/danielschillem/KALAN-SIRA/internal/enrollment"
+	"github.com/danielschillem/KALAN-SIRA/internal/httpapi"
+	"github.com/danielschillem/KALAN-SIRA/internal/notification"
+	"github.com/danielschillem/KALAN-SIRA/internal/parent"
+	"github.com/danielschillem/KALAN-SIRA/internal/payment"
+	"github.com/danielschillem/KALAN-SIRA/internal/portal"
+	"github.com/danielschillem/KALAN-SIRA/internal/school"
+	"github.com/danielschillem/KALAN-SIRA/internal/student"
+)
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	cfg, err := config.Load()
+	if err != nil { log.Fatal(err) }
+	db, err := database.OpenPostgres(ctx, cfg.DatabaseURL)
+	if err != nil { log.Fatal(err) }
+	defer db.Close()
+	redisClient, err := database.OpenRedis(ctx, cfg.RedisURL)
+	if err != nil { log.Fatal(err) }
+	defer redisClient.Close()
+	handler := httpapi.NewRouter(school.NewService(db), academic.NewService(db), student.NewService(db), enrollment.NewService(db), billing.NewService(db), payment.NewService(db), portal.NewService(db), notification.NewService(db), parent.NewService(db), auth.NewService(db), dashboard.NewService(db), admission.NewService(db))
+	server := &http.Server{Addr: ":" + cfg.Port, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
+	go func() { log.Printf("KALAN-SIRA API listening on %s", server.Addr); if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed { log.Fatal(err) } }()
+	<-ctx.Done()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil { log.Printf("shutdown: %v", err) }
+}

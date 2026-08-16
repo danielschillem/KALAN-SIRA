@@ -18,6 +18,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Resolve Go modules
+        run: go mod download
       - name: Report formatting debt
         run: |
           files="$(gofmt -l ./apps ./internal)"
@@ -26,11 +28,11 @@ jobs:
             echo "$files"
           fi
       - name: Vet
-        run: go vet ./...
+        run: go vet -mod=mod ./...
       - name: Test
-        run: go test ./...
+        run: go test -mod=mod ./...
       - name: Build API
-        run: go build ./apps/api
+        run: go build -mod=mod ./apps/api
 
   admin-web:
     name: Admin Web
@@ -43,7 +45,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: false
       - name: Install
         run: npm install --no-audit --no-fund
       - name: Build

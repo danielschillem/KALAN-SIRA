@@ -1,0 +1,9 @@
+package httpapi
+import("context";"net/http";"strings";"github.com/danielschillem/KALAN-SIRA/internal/auth")
+type principalKey struct{}
+func(r *Router)requestOTP(w http.ResponseWriter,q *http.Request){var i auth.RequestOTPInput;if !decode(w,q,&i){return};o,e:=r.auth.RequestOTP(q.Context(),i);created(w,o,e,"otp_request_failed")}
+func(r *Router)verifyOTP(w http.ResponseWriter,q *http.Request){var i auth.VerifyOTPInput;if !decode(w,q,&i){return};o,e:=r.auth.VerifyOTP(q.Context(),i);if e!=nil{writeError(w,401,"otp_verification_failed",e.Error());return};writeJSON(w,200,o)}
+func(r *Router)requireAuth(next http.Handler)http.Handler{return http.HandlerFunc(func(w http.ResponseWriter,q *http.Request){v:=q.Header.Get("Authorization");if !strings.HasPrefix(v,"Bearer "){writeError(w,401,"unauthorized","authentication required");return};p,e:=r.auth.Authenticate(q.Context(),strings.TrimSpace(strings.TrimPrefix(v,"Bearer ")));if e!=nil{writeError(w,401,"unauthorized","invalid or expired session");return};next.ServeHTTP(w,q.WithContext(context.WithValue(q.Context(),principalKey{},p)))})}
+func principal(q *http.Request)(auth.Principal,bool){p,ok:=q.Context().Value(principalKey{}).(auth.Principal);return p,ok}
+func(r *Router)parentDashboardSecure(w http.ResponseWriter,q *http.Request){p,ok:=principal(q);if !ok||p.Role!="PARENT"{writeError(w,403,"forbidden","parent access required");return};o,e:=r.parents.Dashboard(q.Context(),p.GuardianPublicID);if e!=nil{writeError(w,404,"parent_not_found","parent not found");return};writeJSON(w,200,o)}
+func(r *Router)parentChildSecure(w http.ResponseWriter,q *http.Request){p,ok:=principal(q);if !ok||p.Role!="PARENT"{writeError(w,403,"forbidden","parent access required");return};o,e:=r.parents.Child(q.Context(),p.GuardianPublicID,q.PathValue("studentID"));if e!=nil{writeError(w,404,"child_not_found","child not found");return};writeJSON(w,200,o)}
